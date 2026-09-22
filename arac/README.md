@@ -58,6 +58,8 @@ python3 -m sketchfab_eslestirici kazanimlar.csv
 | `--sema-incele` | Ham JSON'u ve çözümlenen alan adlarını yazar, çıkar |
 | `--kati-sema` | Beklenen alan adları yanıtta yoksa çalışmayı durdurur |
 | `--llm-kapali` | LLM yerine sözlük tabanlı yedek terim üretimini kullanır |
+| `--hepsini-dene` | Uygunluk kapısını kapatır, her kazanım için terim dener |
+| `--asgari-puan 0.5` | Bu puanın altındaki modelleri listelemez (0 = kapalı) |
 | `--sahte-veri` | Ağ erişimi olmadan örnek veriyle çalıştırır (yalnızca deneme) |
 | `--sutun-kazanim "..."` | Sütun otomatik algılanamazsa elle eşleme |
 
@@ -66,9 +68,11 @@ python3 -m sketchfab_eslestirici kazanimlar.csv
 1. **CSV okuma** — `kazanimlar.py`. Ayraç (`;` / `,` / tab) ve kodlama
    (UTF-8, CP1254) otomatik algılanır. Sütun başlıkları Türkçe karakterler
    sadeleştirilerek eşlenir (`Kazanım`, `kazanim`, `learning outcome`…).
-2. **Arama terimi üretimi** — `terimler.py`. Anthropic Messages API'ye
-   `messages.parse` + Pydantic şeması ile sorulur, böylece dönen JSON
-   doğrulanmış olur. Kazanımlar 8'erli yığınlar hâlinde gönderilir; bir yığın
+2. **Uygunluk kararı + arama terimi üretimi** — `terimler.py`. Anthropic
+   Messages API'ye `messages.parse` + Pydantic şeması ile sorulur, böylece dönen
+   JSON doğrulanmış olur. Model **önce "bu etkinlik için 3B model gerçekten işe
+   yarar mı?"** sorusuna karar verir (aşağıya bakın), yalnızca evet ise terim
+   üretir. Kazanımlar 8'erli yığınlar hâlinde gönderilir; bir yığın
    başarısız olursa tek tek, o da olmazsa sözlük yedeğine düşülür.
    Terimler, satırın tamamına (seviye + ünite + etkinlik + kazanım + içerik)
    göre önbelleklenir; bağlam değişirse yeniden üretilir.
@@ -77,6 +81,27 @@ python3 -m sketchfab_eslestirici kazanimlar.csv
 4. **Seçim** — `puanlama.py`. Terimlerden gelen adaylar `uid` üzerinden
    tekilleştirilir, puanlanır, en iyi 5'i seçilir.
 5. **Çıktı** — `cikti_excel.py` ve `cikti_html.py`.
+
+### Uygunluk kapısı: her kazanıma model önerilmez
+
+Listedeki her etkinliğin 3B modelle anlatılacak bir karşılığı yok. "Duygularımı
+Keşfediyorum" (sosyal-duygusal), "Mis Kokulu Kremim" (karıştırma süreci) veya
+"Bez Kalemlik Boyama" (el işi) için model önermek, tabloyu alakasız satırlarla
+doldurur. Bu yüzden terim üretimi iki aşamalı:
+
+1. `uygun = true/false` — etkinliğin merkezinde, döndürüp inceleyerek öğrenmeyi
+   kolaylaştıran **somut** bir nesne/yapı/organizma var mı? Kararsız kalınırsa
+   `false`. Az ama isabetli öneri, çok ama alakasız öneriden iyidir.
+2. Yalnızca `uygun = true` ise 2–4 terim üretilir.
+
+`uygun = false` olan kazanım için **Sketchfab'e hiç istek gitmez**; kazanım
+`Model Önerilmeyenler` sayfasında kısa bir gerekçeyle listelenir ve
+`onizleme.html` içinde soluk, kesik çizgili bir blok olarak görünür. Böylece
+"atlandı" ile "arandı ama bulunamadı" birbirine karışmaz — ikincisi ayrı bir
+`Eşleşmeyenler` sayfasında durur.
+
+Kapıyı kapatmak için `--hepsini-dene`, zayıf eşleşmeleri elemek için
+`--asgari-puan 0.5` kullanılabilir.
 
 ### Puanlama
 
@@ -99,9 +124,13 @@ görüntüleyici linki olmayanlar.
 veri setindeki **188 kazanımın 127'sini** karşılıyor. Kalan 61'i, kazanım alanı
 genel müfredat kodu olduğu ve etkinlik adı sözlükte bulunmadığı için
 karşılayamıyor. Bu durumda araç **bilerek boş terim listesi döndürür** ve o
-kazanımı `Eşleşmeyenler` sayfasında raporlar — Türkçe kelimeleri arama terimi
-diye göndermek Sketchfab'de alakasız 5 model getirirdi. Tam kapsama için
-`ANTHROPIC_API_KEY` gerekir.
+kazanımı `Model Önerilmeyenler` sayfasında raporlar — Türkçe kelimeleri arama
+terimi diye göndermek Sketchfab'de alakasız 5 model getirirdi.
+
+Sözlük yedeğinin uygunluk kararı zayıftır: "Benim Vücudum" gibi aslında modele
+çok uygun bir etkinliği sözlükte karşılığı olmadığı için eler, "Bez Kalemlik
+Boyama" gibi bir el işi etkinliğine ise "pencil holder" terimini üretir. Doğru
+ayıklama için `ANTHROPIC_API_KEY` gerekir.
 
 ## Yarıda kesilme ve hız sınırı
 

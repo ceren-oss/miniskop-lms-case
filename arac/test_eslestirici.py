@@ -311,13 +311,67 @@ def test_baglam_imzasi_etkinlik_adini_kapsar(tmp_path: Path):
     assert "dinosaur" in trm.sozlukten_terimler(kayitlar[0].baglam_imzasi)
 
 
-def test_terimsiz_kazanim_eslesmeyen_olarak_raporlanir(tmp_path: Path):
-    from sketchfab_eslestirici.cikti_excel import yaz as excel_yaz
+def test_uygun_gorulmeyen_ve_bulunamayan_ayri_sayfalarda(tmp_path: Path):
+    """3B model uygun görülmeyen kazanım ile arayıp bulamadığımız ayrı raporlanmalı."""
     from openpyxl import load_workbook
 
-    kayit = kz.Kazanim(sira=1, seviye="3 Yaş", etkinlik="X", kazanim="FAB.6. ...")
+    from sketchfab_eslestirici.cikti_excel import yaz as excel_yaz
+    from sketchfab_eslestirici.terimler import TerimKarari
+
+    elenen = kz.Kazanim(sira=1, seviye="3 Yaş", etkinlik="Duygularım", kazanim="SDB1.1. ...")
+    aranan = kz.Kazanim(sira=2, seviye="5. Sınıf", etkinlik="Periskop", kazanim="F.5. ...")
+    kararlar = {
+        elenen.kimlik: TerimKarari(uygun=False, neden="sosyal-duygusal tema"),
+        aranan.kimlik: TerimKarari(terimler=["periscope"], uygun=True),
+    }
     yol = tmp_path / "e.xlsx"
-    excel_yaz(yol, [(kayit, [])], {kayit.kimlik: []}, {}, False)
+    excel_yaz(yol, [(elenen, []), (aranan, [])], kararlar, {}, False)
     kitap = load_workbook(yol)
-    assert "Eşleşmeyenler" in kitap.sheetnames
-    assert kitap["Eşleşmeyenler"].cell(row=2, column=2).value == "X"
+
+    assert kitap["Model Önerilmeyenler"].cell(row=2, column=2).value == "Duygularım"
+    assert kitap["Model Önerilmeyenler"].cell(row=2, column=4).value == "sosyal-duygusal tema"
+    assert kitap["Eşleşmeyenler"].cell(row=2, column=2).value == "Periskop"
+
+
+def test_uygunsuz_kazanim_icin_arama_yapilmaz(tmp_path: Path, monkeypatch):
+    """Uygunluk kapısı kapalıysa Sketchfab'e hiç istek gitmemeli."""
+    from sketchfab_eslestirici import cli
+    from sketchfab_eslestirici.terimler import TerimKarari
+
+    girdi = tmp_path / "k.csv"
+    girdi.write_text(
+        "Seviye;Etkinlik;Kazanım\n3 Yaş;Duygularımı Keşfediyorum;SDB1.1. Kendini Tanıma\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli.trm, "uret",
+        lambda *a, **k: {"K001": TerimKarari(uygun=False, neden="sosyal-duygusal tema")},
+    )
+    a = ayarlar(tmp_path, sahte_veri=True)
+    a.girdi, a.cikti_dizini = girdi, tmp_path / "cikti"
+    assert cli.calistir(a) == 0
+
+    from openpyxl import load_workbook
+    kitap = load_workbook(a.xlsx_yolu)
+    assert "Model Önerilmeyenler" in kitap.sheetnames
+    # Eslesmeler sayfasinda hic veri satiri olmamali (uyari bandi + baslik haric)
+    seviyeler = [h.value for h in kitap["Eşleşmeler"]["A"]]
+    assert "3 Yaş" not in seviyeler
+
+
+def test_terim_veremeyen_llm_yaniti_uygunsuz_sayilir():
+    """Model 'uygun' deyip terim vermezse arama yapılamaz; uygunsuz sayılmalı."""
+    class SahteYanitNesnesi:
+        parsed_output = trm.TerimYaniti(
+            sonuclar=[trm.TerimSeti(kimlik="K001", uygun=True, terimler=[], neden="")]
+        )
+
+    class SahteIstemciLLM:
+        class messages:
+            @staticmethod
+            def parse(**kwargs):
+                return SahteYanitNesnesi()
+
+    kayit = kz.Kazanim(sira=1, seviye="3 Yaş", etkinlik="X", kazanim="Y")
+    kararlar = trm._yigin_sor(SahteIstemciLLM(), "model", [kayit])
+    assert kararlar["K001"].uygun is False

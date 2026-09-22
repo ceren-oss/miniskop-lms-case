@@ -8,6 +8,7 @@ from typing import Any
 
 from .kazanimlar import Kazanim
 from .sketchfab import Model
+from .terimler import TerimKarari
 
 SAYFA = """<!DOCTYPE html>
 <html lang="tr">
@@ -83,6 +84,13 @@ header p {{ color: var(--soluk); margin: 0 0 18px; }}
 .baglantilar a {{ color: var(--vurgu); text-decoration: none; font-weight: 600; }}
 .baglantilar a:hover {{ text-decoration: underline; }}
 .bos {{ color: var(--soluk); font-style: italic; padding: 4px 0 14px; }}
+.kazanim-blogu.elenen {{ opacity: .72; border-style: dashed; }}
+.atlandi {{
+  display: inline-block; font-size: 12px; color: var(--soluk);
+  background: var(--arka); border: 1px solid var(--cizgi); border-radius: 7px;
+  padding: 7px 11px; margin-bottom: 10px;
+}}
+.atlandi b {{ color: var(--metin); }}
 .gizli {{ display: none !important; }}
 footer {{ margin-top: 36px; color: var(--soluk); font-size: 12px; border-top: 1px solid var(--cizgi); padding-top: 14px; }}
 </style>
@@ -191,19 +199,27 @@ def _kart(model: Model) -> str:
       </article>"""
 
 
-def _blok(kazanim: Kazanim, modeller: list[Model], terimler: list[str]) -> str:
+def _blok(kazanim: Kazanim, modeller: list[Model], karar: TerimKarari) -> str:
     arama_metni = _katla(
         " ".join(
-            [kazanim.seviye, kazanim.etkinlik, kazanim.kazanim, *terimler]
+            [kazanim.seviye, kazanim.etkinlik, kazanim.kazanim, *karar.terimler]
             + [m.ad for m in modeller]
             + [m.yazar_ad for m in modeller]
         )
     )
-    terim_html = "".join(f"<code>{_k(t)}</code>" for t in terimler) or "<em>terim üretilemedi</em>"
+    if not karar.uygun:
+        # 3B modelin ogrenmeye katki saglamadigi etkinlik: gerekcesiyle gosterilir.
+        return f"""  <section class="kazanim-blogu elenen" data-arama="{_k(arama_metni)}">
+    <div class="etkinlik">{_k(kazanim.etkinlik)}</div>
+    <div class="kazanim-metni">{_k(kazanim.kazanim)}</div>
+    <div class="atlandi"><b>3B model önerilmedi</b> · {_k(karar.neden)}</div>
+  </section>"""
+
+    terim_html = "".join(f"<code>{_k(t)}</code>" for t in karar.terimler)
     if modeller:
         icerik = '<div class="izgara">\n' + "\n".join(_kart(m) for m in modeller) + "\n    </div>"
     else:
-        icerik = '<div class="bos">Bu kazanım için uygun model bulunamadı.</div>'
+        icerik = '<div class="bos">Uygun görüldü ama Sketchfab\'de ölçütleri karşılayan model bulunamadı.</div>'
     return f"""  <section class="kazanim-blogu" data-arama="{_k(arama_metni)}">
     <div class="etkinlik">{_k(kazanim.etkinlik)}</div>
     <div class="kazanim-metni">{_k(kazanim.kazanim)}</div>
@@ -215,7 +231,7 @@ def _blok(kazanim: Kazanim, modeller: list[Model], terimler: list[str]) -> str:
 def yaz(
     yol: Path,
     satirlar: list[tuple[Kazanim, list[Model]]],
-    terimler: dict[str, list[str]],
+    kararlar: dict[str, TerimKarari],
     ustbilgi: dict[str, Any],
     sahte_veri: bool = False,
 ) -> None:
@@ -226,7 +242,10 @@ def yaz(
 
     bolumler = []
     for seviye, ogeler in gruplar.items():
-        bloklar = "\n".join(_blok(k, m, terimler.get(k.kimlik, [])) for k, m in ogeler)
+        bloklar = "\n".join(
+            _blok(k, m, kararlar.get(k.kimlik) or TerimKarari(uygun=False, neden="terim yok"))
+            for k, m in ogeler
+        )
         bolumler.append(
             f'<div class="seviye-bolumu">\n'
             f'  <div class="seviye-basligi">{_k(seviye)} · {len(ogeler)} kazanım</div>\n'
@@ -234,10 +253,15 @@ def yaz(
         )
 
     toplam_model = sum(len(m) for _, m in satirlar)
+    elenen = sum(
+        1 for k, _ in satirlar
+        if not (kararlar.get(k.kimlik) or TerimKarari(uygun=False)).uygun
+    )
     ozet = (
         f"{len(satirlar)} kazanım · {toplam_model} model önerisi · "
         f"kazanım başına en iyi {ustbilgi.get('model_basina', 5)} model "
-        f"(beğeni, üçgen sayısı ve gömülebilirliğe göre sıralandı)"
+        f"(beğeni, üçgen sayısı ve gömülebilirliğe göre sıralandı) · "
+        f"{elenen} kazanımda 3B model uygun görülmedi"
     )
     uyari = (
         '<div class="uyari">ÖRNEK VERİ: Bu sayfa --sahte-veri modunda üretildi. '

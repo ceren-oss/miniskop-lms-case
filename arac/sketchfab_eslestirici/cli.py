@@ -18,6 +18,7 @@ from .cikti_html import yaz as html_yaz
 from .config import ARAMA_SAYFA_LIMITI, VARSAYILAN_MODEL, Ayarlar, ortamdan_token
 from .puanlama import en_iyileri_sec
 from .sketchfab import Model, SemaUyusmazligi, SketchfabIstemcisi
+from .terimler import TerimKarari
 
 log = logging.getLogger("eslestirici")
 
@@ -49,6 +50,9 @@ def ayristir(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Yalnizca ilk N kazanimi isle (test icin)")
     a.add_argument("--model-basina", type=int, default=5,
                    help="Kazanim basina secilecek model sayisi")
+    a.add_argument("--hepsini-dene", action="store_true",
+                   help="Uygunluk kapisini kapat: 3B modelin anlamli olmadigi "
+                        "kazanimlar icin de terim uretmeyi dene")
     a.add_argument("--aday", type=int, default=ARAMA_SAYFA_LIMITI,
                    help=f"Her terim icin cekilecek aday sayisi (en fazla {ARAMA_SAYFA_LIMITI})")
 
@@ -75,6 +79,8 @@ def ayristir(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--agirlik-begeni", type=float, default=0.45)
     p.add_argument("--agirlik-ucgen", type=float, default=0.35)
     p.add_argument("--agirlik-gomulebilirlik", type=float, default=0.20)
+    p.add_argument("--asgari-puan", type=float, default=0.0,
+                   help="Bu puanin altindaki modeller listelenmez (0 = kapali)")
 
     x = a.add_argument_group("sutun eslemesi (otomatik algilama yetmezse)")
     x.add_argument("--sutun-seviye")
@@ -126,9 +132,13 @@ def calistir(ayarlar: Ayarlar) -> int:
     else:
         kaynak = f"Anthropic {ayarlar.llm_model}"
     log.info("Terim uretimi: %s", kaynak)
-    terim_haritasi = trm.uret(
-        secilenler, onbellek, ayarlar.llm_model, ayarlar.llm_yigin, llm_kapali
+    kararlar = trm.uret(
+        secilenler, onbellek, ayarlar.llm_model, ayarlar.llm_yigin, llm_kapali,
+        ayarlar.hepsini_dene,
     )
+    uygun_sayisi = sum(1 for k in kararlar.values() if k.uygun)
+    log.info("Uygunluk: %d kazanim icin 3B model onerilecek, %d kazanim elendi.",
+             uygun_sayisi, len(kararlar) - uygun_sayisi)
 
     # 3-4) Arama + secim
     satirlar: list[tuple[kz.Kazanim, list[Model]]] = []
@@ -137,9 +147,14 @@ def calistir(ayarlar: Ayarlar) -> int:
             log.warning("Durduruldu: %d/%d kazanim islendi; onbellek korundu.",
                         sira - 1, len(secilenler))
             break
-        kazanim_terimleri = terim_haritasi.get(kazanim.kimlik, [])
+        karar = kararlar.get(kazanim.kimlik) or TerimKarari(uygun=False, neden="terim yok")
+        if not karar.uygun:
+            satirlar.append((kazanim, []))
+            log.info("[%d/%d] %-42.42s | ATLANDI: %s",
+                     sira, len(secilenler), kazanim.etkinlik, karar.neden)
+            continue
         adaylar: list[Model] = []
-        for terim in kazanim_terimleri:
+        for terim in karar.terimler:
             try:
                 adaylar.extend(istemci.ara(terim, ayarlar.aday_sayisi, ayarlar.max_ucgen))
             except SemaUyusmazligi:
@@ -149,8 +164,8 @@ def calistir(ayarlar: Ayarlar) -> int:
         en_iyiler, elenen = en_iyileri_sec(adaylar, ayarlar)
         satirlar.append((kazanim, en_iyiler))
         log.info("[%d/%d] %-42.42s | terim: %-28.28s | aday %3d -> %d%s",
-                 sira, len(secilenler), kazanim.kazanim,
-                 ", ".join(kazanim_terimleri), len(adaylar), len(en_iyiler),
+                 sira, len(secilenler), kazanim.etkinlik,
+                 ", ".join(karar.terimler), len(adaylar), len(en_iyiler),
                  f" (elenen: {elenen})" if elenen else "")
 
     # 5) Ciktilar
@@ -161,17 +176,24 @@ def calistir(ayarlar: Ayarlar) -> int:
         "istek_sayisi": istemci.istek_sayisi,
         "onbellek": onbellek.ozet(),
         "model_basina": ayarlar.model_basina,
+        "uygun_sayisi": uygun_sayisi,
+        "asgari_puan": ayarlar.asgari_puan,
         "agirlik_begeni": ayarlar.agirlik_begeni,
         "agirlik_ucgen": ayarlar.agirlik_ucgen,
         "agirlik_gomulebilirlik": ayarlar.agirlik_gomulebilirlik,
     }
-    excel_yaz(ayarlar.xlsx_yolu, satirlar, terim_haritasi, ustbilgi, ayarlar.sahte_veri)
-    html_yaz(ayarlar.html_yolu, satirlar, terim_haritasi, ustbilgi, ayarlar.sahte_veri)
+    excel_yaz(ayarlar.xlsx_yolu, satirlar, kararlar, ustbilgi, ayarlar.sahte_veri)
+    html_yaz(ayarlar.html_yolu, satirlar, kararlar, ustbilgi, ayarlar.sahte_veri)
 
     toplam = sum(len(m) for _, m in satirlar)
-    bos = sum(1 for _, m in satirlar if not m)
+    elendi = sum(1 for k, _ in satirlar
+                 if not (kararlar.get(k.kimlik) or TerimKarari()).uygun)
+    bos = sum(1 for k, m in satirlar
+              if not m and (kararlar.get(k.kimlik) or TerimKarari()).uygun)
     print()
-    print(f"  {len(satirlar)} kazanım işlendi · {toplam} model önerisi · {bos} kazanım boş")
+    print(f"  {len(satirlar)} kazanım · {toplam} model önerisi")
+    print(f"  {elendi} kazanım için 3B model önerilmedi · "
+          f"{bos} kazanımda uygun model bulunamadı")
     print(f"  {istemci.istek_sayisi} Sketchfab isteği · {onbellek.ozet()}")
     print(f"  → {ayarlar.xlsx_yolu}")
     print(f"  → {ayarlar.html_yolu}")
@@ -210,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         agirlik_begeni=a.agirlik_begeni,
         agirlik_ucgen=a.agirlik_ucgen,
         agirlik_gomulebilirlik=a.agirlik_gomulebilirlik,
+        hepsini_dene=a.hepsini_dene,
+        asgari_puan=a.asgari_puan,
         kati_sema=a.kati_sema,
         onbellek_omru_gun=a.onbellek_omru,
         sutun_eslemesi={

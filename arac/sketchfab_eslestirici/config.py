@@ -77,6 +77,11 @@ class Ayarlar:
     # Otomatik algilama yetmediginde elle verilen sutun eslemesi
     sutun_eslemesi: dict[str, str] | None = None
 
+    # Uygunluk kapisini devre disi birak: her kazanim icin terim uretmeyi dene
+    hepsini_dene: bool = False
+    # Bu puanin altindaki modeller listelenmez (0 = kapali)
+    asgari_puan: float = 0.0
+
     @property
     def xlsx_yolu(self) -> Path:
         return self.cikti_dizini / self.xlsx_adi

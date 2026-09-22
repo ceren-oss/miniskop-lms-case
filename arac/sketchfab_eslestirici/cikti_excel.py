@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 
 from .kazanimlar import Kazanim
 from .sketchfab import Model
+from .terimler import TerimKarari
 
 BASLIKLAR = [
     ("Seviye", 12),
@@ -50,7 +51,7 @@ def _tablet_yuku(ucgen: int | None) -> str:
 def yaz(
     yol: Path,
     satirlar: list[tuple[Kazanim, list[Model]]],
-    terimler: dict[str, list[str]],
+    kararlar: dict[str, Any],
     ustbilgi: dict[str, Any],
     sahte_veri: bool = False,
 ) -> None:
@@ -117,17 +118,23 @@ def yaz(
             f"A{baslik_satiri}:{get_column_letter(len(BASLIKLAR))}{satir_no - 1}"
         )
 
-    _ozet_sayfasi(kitap, satirlar, terimler, ustbilgi, sahte_veri)
-    _eslesmeyen_sayfasi(kitap, satirlar, terimler)
+    _ozet_sayfasi(kitap, satirlar, kararlar, ustbilgi, sahte_veri)
+    _eslesmeyen_sayfasi(kitap, satirlar, kararlar)
+    _onerilmeyen_sayfasi(kitap, satirlar, kararlar)
 
     yol.parent.mkdir(parents=True, exist_ok=True)
     kitap.save(yol)
 
 
+def _karar(kararlar: dict[str, Any], kazanim: Kazanim) -> TerimKarari:
+    """TerimKarari'yi guvenle getirir (eksikse uygunsuz sayilir)."""
+    return kararlar.get(kazanim.kimlik) or TerimKarari(uygun=False, neden="terim yok")
+
+
 def _ozet_sayfasi(
     kitap: Workbook,
     satirlar: list[tuple[Kazanim, list[Model]]],
-    terimler: dict[str, list[str]],
+    kararlar: dict[str, Any],
     ustbilgi: dict[str, Any],
     sahte_veri: bool,
 ) -> None:
@@ -137,6 +144,7 @@ def _ozet_sayfasi(
 
     toplam_model = sum(len(m) for _, m in satirlar)
     eslesen = sum(1 for _, m in satirlar if m)
+    onerilmeyen = sum(1 for k, _ in satirlar if not _karar(kararlar, k).uygun)
     hafif = sum(1 for _, ms in satirlar for m in ms if (m.ucgen or 0) <= 150_000)
 
     veriler: list[tuple[str, Any]] = [
@@ -149,10 +157,12 @@ def _ozet_sayfasi(
         ("", ""),
         ("Sonuçlar", ""),
         ("Kazanım sayısı", len(satirlar)),
-        ("Model bulunan kazanım", eslesen),
-        ("Model bulunamayan kazanım", len(satirlar) - eslesen),
+        ("3B model önerilen kazanım", eslesen),
+        ("3B model uygun görülmeyen kazanım", onerilmeyen),
+        ("Uygun ama model bulunamayan kazanım", len(satirlar) - eslesen - onerilmeyen),
         ("Toplam model satırı", toplam_model),
-        ("Üretilen arama terimi", sum(len(t) for t in terimler.values())),
+        ("Üretilen arama terimi",
+         sum(len(_karar(kararlar, k).terimler) for k, _ in satirlar)),
         ("Tablet için hafif model (≤150k üçgen)", f"{hafif} / {toplam_model}"),
         ("", ""),
         ("Puanlama ağırlıkları", ""),
@@ -175,9 +185,14 @@ def _ozet_sayfasi(
 def _eslesmeyen_sayfasi(
     kitap: Workbook,
     satirlar: list[tuple[Kazanim, list[Model]]],
-    terimler: dict[str, list[str]],
+    kararlar: dict[str, Any],
 ) -> None:
-    eksikler = [(k, terimler.get(k.kimlik, [])) for k, m in satirlar if not m]
+    """Uygun bulunup da Sketchfab'de karsiligi cikmayan kazanimlar."""
+    eksikler = [
+        (k, _karar(kararlar, k).terimler)
+        for k, m in satirlar
+        if not m and _karar(kararlar, k).uygun
+    ]
     if not eksikler:
         return
     sayfa = kitap.create_sheet("Eşleşmeyenler")
@@ -193,3 +208,30 @@ def _eslesmeyen_sayfasi(
         sayfa.cell(row=satir, column=2, value=kazanim.etkinlik)
         sayfa.cell(row=satir, column=3, value=kazanim.kazanim).alignment = Alignment(wrap_text=True)
         sayfa.cell(row=satir, column=4, value=", ".join(terim_listesi))
+
+
+def _onerilmeyen_sayfasi(
+    kitap: Workbook,
+    satirlar: list[tuple[Kazanim, list[Model]]],
+    kararlar: dict[str, Any],
+) -> None:
+    """3B modelin ogrenmeye katki saglamayacagi kazanimlar ve gerekceleri."""
+    elenenler = [(k, _karar(kararlar, k)) for k, _ in satirlar
+                 if not _karar(kararlar, k).uygun]
+    if not elenenler:
+        return
+    sayfa = kitap.create_sheet("Model Önerilmeyenler")
+    for sutun, (baslik, genislik) in enumerate(
+        [("Seviye", 12), ("Etkinlik", 28), ("Kazanım", 58), ("Neden önerilmedi", 46)],
+        start=1,
+    ):
+        hucre = sayfa.cell(row=1, column=sutun, value=baslik)
+        hucre.fill = BASLIK_DOLGU
+        hucre.font = BASLIK_YAZI
+        sayfa.column_dimensions[get_column_letter(sutun)].width = genislik
+    for satir, (kazanim, karar) in enumerate(elenenler, start=2):
+        sayfa.cell(row=satir, column=1, value=kazanim.seviye)
+        sayfa.cell(row=satir, column=2, value=kazanim.etkinlik)
+        sayfa.cell(row=satir, column=3, value=kazanim.kazanim).alignment = Alignment(wrap_text=True)
+        sayfa.cell(row=satir, column=4, value=karar.neden).alignment = Alignment(wrap_text=True)
+    sayfa.freeze_panes = "A2"

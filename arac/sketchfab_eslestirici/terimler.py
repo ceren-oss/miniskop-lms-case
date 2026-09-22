@@ -10,6 +10,9 @@ import logging
 import re
 import unicodedata
 
+import dataclasses
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from .cache import Onbellek
@@ -18,18 +21,37 @@ from .kazanimlar import Kazanim
 log = logging.getLogger(__name__)
 
 SISTEM_TALIMATI = """\
-Sen bir fen egitimi icerik kuratorusun. Turkce ilk/orta okul kazanimlarini,
-Sketchfab'de 3B model aramak icin kullanilacak INGILIZCE arama terimlerine
-ceviriyorsun.
+Sen bir fen egitimi icerik kuratorusun. Turkce ilk/orta okul etkinliklerini
+inceleyip, DERSTE 3B MODEL GOSTERMENIN GERCEKTEN ISE YARAYACAGI olanlari
+seciyorsun ve yalnizca onlar icin Ingilizce Sketchfab arama terimi uretiyorsun.
 
-Sana her satirda seviye, unite, ETKINLIK ADI, kazanim ve varsa etkinlik
-icerigi verilir. DIKKAT: kazanim alani cogu zaman genel bir mufredat kodudur
+Sana her satirda seviye, unite, ETKINLIK ADI, kazanim ve varsa etkinlik icerigi
+verilir. DIKKAT: kazanim alani cogu zaman genel bir mufredat kodudur
 ("FAB.1. ... bilimsel gozlem yapabilme") ve konu hakkinda bilgi tasimaz. Boyle
 durumlarda esas sinyal ETKINLIK ADI ve etkinlik icerigidir ("Lav Lambasi",
-"Kopuren Dinozor" -> lava lamp, dinosaur). Terimleri satirin TAMAMINA bakarak
-uret; genel kazanim kodunu birebir cevirme.
+"Kopuren Dinozor" -> lava lamp, dinosaur). Satirin TAMAMINA bak.
 
-Her kazanim icin 2-4 terim uret ve su kurallara uy:
+ONCE KARAR VER: uygun = true mu?
+
+uygun = true yalnizca su durumda: etkinligin merkezinde, 3B modeli dondurup
+inceleyerek ogrenmeyi acikca kolaylastiran SOMUT bir nesne/yapi/organizma/olgu
+var. Ornekler: iskelet, kalp, volkan, gunes sistemi, dinozor, hucre, basit
+makine, elektrik devresi, periskop, mikroskop.
+
+uygun = false ise terim URETME (terimler bos liste olsun) ve neden alanina kisa
+bir Turkce gerekce yaz. Sunlar icin false ver:
+- Sosyal-duygusal, degerler, iletisim, oz farkindalik temalari
+  ("Duygularimi Kesfediyorum").
+- El isi / karistirma / boyama sureci odakli etkinlikler; ogrenilen sey urun
+  degil islemdir ("Mis Kokulu Kremim", "Bez Kalemlik Boyama").
+- Soyut beceri veya surec kazanimlari (siniflandirma, tahmin, olcme) somut bir
+  nesneye baglanmiyorsa.
+- Kimyasal tepkime/renk degisimi gibi 3B statik modelin anlatamayacagi olaylar.
+
+Karasiz kaldigin her durumda false ver. Az ama isabetli oneri, cok ama alakasiz
+oneriden iyidir.
+
+uygun = true ise 2-4 terim uret ve su kurallara uy:
 - Terimler INGILIZCE olacak.
 - Her terim 1-3 kelime, tekil, somut bir NESNE/YAPI/OLGU adi olacak
   ("volcano", "human heart", "solar system"). 3B model olarak var olabilecek
@@ -43,18 +65,48 @@ Her kazanim icin 2-4 terim uret ve su kurallara uy:
 - Kazanim birden fazla kavram iceriyorsa en gorsellestirilebilir olanlari sec.
 - Seviyeyi dikkate al: okul oncesi icin basit ve tanidik nesneler, ust siniflar
   icin daha teknik modeller uygun.
-- Hicbir sekilde somut bir nesne cikmiyorsa etkinligin malzemesini/aracini yaz
-  (orn. "microscope", "magnifying glass").
 """
 
 
 class TerimSeti(BaseModel):
     kimlik: str = Field(description="Kazanimin kimligi, girdideki ile birebir ayni")
-    terimler: list[str] = Field(description="2-4 adet Ingilizce arama terimi")
+    uygun: bool = Field(
+        description="Bu etkinlik icin 3B model gostermek acikca ise yarar mi?"
+    )
+    terimler: list[str] = Field(
+        default_factory=list,
+        description="uygun=true ise 2-4 Ingilizce arama terimi, degilse bos liste",
+    )
+    neden: str = Field(
+        default="", description="uygun=false ise kisa Turkce gerekce"
+    )
 
 
 class TerimYaniti(BaseModel):
     sonuclar: list[TerimSeti]
+
+
+@dataclasses.dataclass(slots=True)
+class TerimKarari:
+    """Bir kazanim icin terim uretimi sonucu."""
+
+    terimler: list[str] = dataclasses.field(default_factory=list)
+    uygun: bool = True
+    neden: str = ""
+
+    @classmethod
+    def sozlukten(cls, ham: Any) -> "TerimKarari":
+        """Onbellekteki kayittan geri yukler (eski liste bicimini de kabul eder)."""
+        if isinstance(ham, list):          # v1 onbellek bicimi
+            return cls(terimler=list(ham), uygun=bool(ham))
+        return cls(
+            terimler=list(ham.get("terimler") or []),
+            uygun=bool(ham.get("uygun", True)),
+            neden=str(ham.get("neden") or ""),
+        )
+
+    def kayit(self) -> dict[str, Any]:
+        return {"terimler": self.terimler, "uygun": self.uygun, "neden": self.neden}
 
 
 # --------------------------------------------------------------------------
@@ -183,7 +235,7 @@ def _istemci():
     return anthropic.Anthropic()
 
 
-def _yigin_sor(istemci, model: str, yigin: list[Kazanim]) -> dict[str, list[str]]:
+def _yigin_sor(istemci, model: str, yigin: list[Kazanim]) -> dict[str, TerimKarari]:
     satirlar = "\n".join(
         f"- kimlik: {k.kimlik}\n"
         f"  seviye: {k.seviye or '-'}\n"
@@ -201,7 +253,8 @@ def _yigin_sor(istemci, model: str, yigin: list[Kazanim]) -> dict[str, list[str]
             {
                 "role": "user",
                 "content": (
-                    "Asagidaki kazanimlarin HER BIRI icin arama terimleri uret. "
+                    "Asagidaki etkinliklerin HER BIRI icin once uygun olup "
+                    "olmadigina karar ver, uygunsa arama terimleri uret. "
                     "Cikti listesi girdideki kimliklerin tamamini icermeli.\n\n"
                     f"{satirlar}"
                 ),
@@ -212,10 +265,17 @@ def _yigin_sor(istemci, model: str, yigin: list[Kazanim]) -> dict[str, list[str]
     ayristirilmis = yanit.parsed_output
     if ayristirilmis is None:
         return {}
-    return {
-        s.kimlik.strip(): [t.strip() for t in s.terimler if t and t.strip()]
-        for s in ayristirilmis.sonuclar
-    }
+    kararlar: dict[str, TerimKarari] = {}
+    for sonuc in ayristirilmis.sonuclar:
+        temiz = [t.strip() for t in sonuc.terimler if t and t.strip()][:4]
+        # Model "uygun" deyip terim vermediyse uygunsuz sayilir: terimsiz arama yapilamaz.
+        uygun = bool(sonuc.uygun and temiz)
+        kararlar[sonuc.kimlik.strip()] = TerimKarari(
+            terimler=temiz if uygun else [],
+            uygun=uygun,
+            neden=(sonuc.neden or "").strip() or ("" if uygun else "gerekçe belirtilmedi"),
+        )
+    return kararlar
 
 
 def uret(
@@ -224,9 +284,10 @@ def uret(
     model: str,
     yigin_boyu: int = 8,
     llm_kapali: bool = False,
-) -> dict[str, list[str]]:
-    """Kazanim kimligi -> terim listesi. Onbellekten okunur, eksikler uretilir."""
-    sonuc: dict[str, list[str]] = {}
+    hepsini_dene: bool = False,
+) -> dict[str, TerimKarari]:
+    """Kazanim kimligi -> TerimKarari. Onbellekten okunur, eksikler uretilir."""
+    sonuc: dict[str, TerimKarari] = {}
     eksik: list[Kazanim] = []
 
     for k in kazanimlar:
@@ -234,8 +295,8 @@ def uret(
             "terimler", model if not llm_kapali else "sozluk", k.baglam_imzasi
         )
         onbellekten = onbellek.oku("terimler", anahtar)
-        if onbellekten:
-            sonuc[k.kimlik] = onbellekten
+        if onbellekten is not None:
+            sonuc[k.kimlik] = TerimKarari.sozlukten(onbellekten)
         else:
             eksik.append(k)
 
@@ -245,11 +306,16 @@ def uret(
     if llm_kapali:
         for k in eksik:
             terimler = sozlukten_terimler(k.baglam_imzasi)
-            sonuc[k.kimlik] = terimler
+            karar = TerimKarari(
+                terimler=terimler,
+                uygun=bool(terimler),
+                neden="" if terimler else "sözlükte somut bir nesne karşılığı bulunamadı",
+            )
+            sonuc[k.kimlik] = karar
             onbellek.yaz(
                 "terimler",
                 Onbellek.anahtar("terimler", "sozluk", k.baglam_imzasi),
-                terimler,
+                karar.kayit(),
                 etiket=k.etkinlik[:80],
             )
         return sonuc
@@ -264,21 +330,31 @@ def uret(
             yanit = {}
 
         for k in yigin:
-            terimler = yanit.get(k.kimlik) or []
-            if not terimler:
+            karar = yanit.get(k.kimlik)
+            if karar is None:
+                # Yigindan yanit gelmediyse tek tek dene, o da olmazsa sozluge dus.
                 try:
-                    tek = _yigin_sor(istemci, model, [k])
-                    terimler = tek.get(k.kimlik) or []
+                    karar = _yigin_sor(istemci, model, [k]).get(k.kimlik)
                 except Exception as hata:
-                    log.warning("K%s icin LLM basarisiz (%s); sozluge dusuluyor.", k.kimlik, hata)
-            if not terimler:
-                terimler = sozlukten_terimler(k.baglam_imzasi)
-            terimler = terimler[:4]
-            sonuc[k.kimlik] = terimler
+                    log.warning("%s icin LLM basarisiz (%s); sozluge dusuluyor.",
+                                k.kimlik, hata)
+                if karar is None:
+                    yedek = sozlukten_terimler(k.baglam_imzasi)
+                    karar = TerimKarari(
+                        terimler=yedek,
+                        uygun=bool(yedek),
+                        neden="" if yedek else "terim üretilemedi (LLM yanıtı alınamadı)",
+                    )
+            if hepsini_dene and not karar.uygun:
+                # Uygunluk kapisini devre disi birak: sozlukten bir terim bulmayi dene.
+                yedek = sozlukten_terimler(k.baglam_imzasi)
+                if yedek:
+                    karar = TerimKarari(terimler=yedek, uygun=True, neden="")
+            sonuc[k.kimlik] = karar
             onbellek.yaz(
                 "terimler",
                 Onbellek.anahtar("terimler", model, k.baglam_imzasi),
-                terimler,
+                karar.kayit(),
                 etiket=k.etkinlik[:80],
             )
     return sonuc

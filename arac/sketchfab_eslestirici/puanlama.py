@@ -141,4 +141,9 @@ def en_iyileri_sec(modeller: list[Model], ayarlar: Ayarlar) -> tuple[list[Model]
             tekil[model.uid] = model
 
     siralanmis = sorted(tekil.values(), key=lambda m: (-m.puan, -m.begeni, m.ad))
+    if ayarlar.asgari_puan > 0:
+        zayif = [m for m in siralanmis if m.puan < ayarlar.asgari_puan]
+        if zayif:
+            elenen[f"puan < {ayarlar.asgari_puan:g}"] = len(zayif)
+        siralanmis = [m for m in siralanmis if m.puan >= ayarlar.asgari_puan]
     return siralanmis[: ayarlar.model_basina], elenen

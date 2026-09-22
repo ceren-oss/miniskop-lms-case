@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.onbellek/
+cikti/
+.pytest_cache/

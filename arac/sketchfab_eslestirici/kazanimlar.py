@@ -15,7 +15,11 @@ KODLAMALAR = ("utf-8-sig", "utf-8", "cp1254", "iso-8859-9", "latin-1")
 SUTUN_IPUCLARI: dict[str, tuple[str, ...]] = {
     "seviye": ("seviye", "sinif", "duzey", "yas", "yasgrubu", "level", "grade"),
     "etkinlik": ("etkinlikadi", "etkinlik", "etkinlikismi", "activity", "activityname", "modul"),
-    "kazanim": ("kazanim", "kazanimlar", "kazanimmetni", "outcome", "objective", "hedef"),
+    "kazanim": ("kazanim", "kazanimlar", "kazanimmetni", "outcome", "objective", "hedef",
+                "ogrenmeciktilari", "ogrenmeciktilarivesurecbilesenleri"),
+    # Baglam sutunlari (zorunlu degil): terim uretiminin isabetini artirir.
+    "unite": ("unite", "ogrenmealani", "konu", "tema", "unit"),
+    "icerik": ("etkinlikicerigi", "icerik", "aciklama", "content", "description"),
 }
 
 
@@ -33,10 +37,17 @@ class Kazanim:
     seviye: str
     etkinlik: str
     kazanim: str
+    unite: str = ""
+    icerik: str = ""
 
     @property
     def kimlik(self) -> str:
         return f"K{self.sira:03d}"
+
+    @property
+    def baglam_imzasi(self) -> str:
+        """Terim onbellegi anahtari: baglam degisirse terimler yeniden uretilir."""
+        return " | ".join((self.kazanim, self.etkinlik, self.unite, self.icerik))
 
 
 def _metni_coz(ham: bytes) -> str:
@@ -62,6 +73,8 @@ def _sutunlari_esle(basliklar: list[str]) -> dict[str, str]:
     for alan, ipuclari in SUTUN_IPUCLARI.items():
         # Once tam eslesme, sonra icerme.
         for baslik, norm in normalize.items():
+            if baslik in esleme.values():
+                continue
             if norm in ipuclari:
                 esleme[alan] = baslik
                 break
@@ -113,6 +126,8 @@ def oku(
                 seviye=(satir.get(esleme.get("seviye", "")) or "").strip(),
                 etkinlik=(satir.get(esleme["etkinlik"]) or "").strip(),
                 kazanim=metin_kazanim,
+                unite=(satir.get(esleme.get("unite", "")) or "").strip(),
+                icerik=(satir.get(esleme.get("icerik", "")) or "").strip(),
             )
         )
     return kazanimlar, esleme

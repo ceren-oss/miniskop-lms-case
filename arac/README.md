@@ -4,6 +4,26 @@ ARGE etkinlik listesindeki her kazanım için Sketchfab'den tablet dostu 3B mode
 önerir. Çıktı: `eslesmeler.xlsx` (paylaşılabilir tablo) + `onizleme.html`
 (küçük önizlemeli tek dosya).
 
+## Girdi: kazanimlar.csv
+
+`kazanimlar.csv` (188 kazanım), Drive'daki **"Keşif Kutusu ARGE"** tablosundan
+`drive_kazanim_cikar.py` ile üretildi. Tablo birden fazla sekmenin birleşimi
+olduğu için betik önce sütun sayısına göre bloklara ayırıyor, yalnızca
+"ÖĞRENME ÇIKTILARI" sütunu olan blokları alıyor, birleştirilmiş seviye
+hücrelerini ileri-dolduruyor ve tekrarları eliyor.
+
+```bash
+python3 drive_kazanim_cikar.py <drive_ciktisi.json> -o kazanimlar.csv
+```
+
+Sütunlar: `Seviye; Ünite; Etkinlik; Kazanım; Etkinlik İçeriği`.
+
+> **Neden ünite ve içerik de okunuyor:** bu listede kazanım alanı çoğu zaman
+> genel bir müfredat kodudur ("FAB.1. Gündelik yaşamda fenle ilgili olaylara…
+> bilimsel gözlem yapabilme") ve konu hakkında hiçbir bilgi taşımaz. Asıl sinyal
+> **etkinlik adındadır** ("Lav Lambası", "Köpüren Dinozor"). Araç bu yüzden
+> seviye + ünite + etkinlik + kazanım + içeriği birlikte terim üretimine verir.
+
 ## Kurulum
 
 ```bash
@@ -50,7 +70,8 @@ python3 -m sketchfab_eslestirici kazanimlar.csv
    `messages.parse` + Pydantic şeması ile sorulur, böylece dönen JSON
    doğrulanmış olur. Kazanımlar 8'erli yığınlar hâlinde gönderilir; bir yığın
    başarısız olursa tek tek, o da olmazsa sözlük yedeğine düşülür.
-   Terimler kazanım metnine göre önbelleklenir.
+   Terimler, satırın tamamına (seviye + ünite + etkinlik + kazanım + içerik)
+   göre önbelleklenir; bağlam değişirse yeniden üretilir.
 3. **Sketchfab araması** — `sketchfab.py`. `GET /v3/search?type=models` +
    `sort_by=-likeCount`. Her yanıt diske önbelleklenir.
 4. **Seçim** — `puanlama.py`. Terimlerden gelen adaylar `uid` üzerinden
@@ -71,6 +92,16 @@ bir ilgi bonusu eklenir; puan 0–1 aralığına normalize edilir. Ağırlıklar
 
 Şunlar tamamen elenir: yaş kısıtlı modeller, embed URL'i olmayanlar,
 görüntüleyici linki olmayanlar.
+
+### Sözlük yedeğinin sınırı
+
+`--llm-kapali` (veya `ANTHROPIC_API_KEY` yoksa) devreye giren sözlük yedeği, bu
+veri setindeki **188 kazanımın 127'sini** karşılıyor. Kalan 61'i, kazanım alanı
+genel müfredat kodu olduğu ve etkinlik adı sözlükte bulunmadığı için
+karşılayamıyor. Bu durumda araç **bilerek boş terim listesi döndürür** ve o
+kazanımı `Eşleşmeyenler` sayfasında raporlar — Türkçe kelimeleri arama terimi
+diye göndermek Sketchfab'de alakasız 5 model getirirdi. Tam kapsama için
+`ANTHROPIC_API_KEY` gerekir.
 
 ## Yarıda kesilme ve hız sınırı
 

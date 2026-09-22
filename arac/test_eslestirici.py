@@ -286,3 +286,38 @@ def test_basarili_yanit_onbellege_yazilir(tmp_path: Path, monkeypatch):
     yeni = SketchfabIstemcisi(Onbellek(tmp_path / "ob"), bekleme=0.0)
     monkeypatch.setattr(yeni.oturum, "get", lambda *a, **k: pytest.fail("ag kullanilmamali"))
     assert yeni._istek("/search", parametreler) == {"results": [{"uid": "a"}]}
+
+
+def test_sozluk_eslesme_yoksa_bos_doner():
+    """Sözlükte karşılığı yoksa Türkçe kelime uydurmak yerine boş dönmeli."""
+    terimler = trm.sozlukten_terimler(
+        "FAB.6. Merak ettiği konular hakkında deneyler yapabilme."
+    )
+    assert terimler == []
+
+
+def test_baglam_imzasi_etkinlik_adini_kapsar(tmp_path: Path):
+    """Kazanım genel bir müfredat koduysa asıl sinyal etkinlik adıdır."""
+    yol = tmp_path / "k.csv"
+    yol.write_text(
+        "Seviye;Ünite;Etkinlik;Kazanım;Etkinlik İçeriği\n"
+        "4 Yaş;Gözlem;Köpüren Dinozor;FAB.1. Bilimsel gözlem yapabilme;Sirke ve karbonat\n",
+        encoding="utf-8",
+    )
+    kayitlar, esleme = kz.oku(yol)
+    assert esleme["unite"] == "Ünite" and esleme["icerik"] == "Etkinlik İçeriği"
+    assert esleme["etkinlik"] == "Etkinlik"        # "Etkinlik İçeriği" ile karismamali
+    assert "Köpüren Dinozor" in kayitlar[0].baglam_imzasi
+    assert "dinosaur" in trm.sozlukten_terimler(kayitlar[0].baglam_imzasi)
+
+
+def test_terimsiz_kazanim_eslesmeyen_olarak_raporlanir(tmp_path: Path):
+    from sketchfab_eslestirici.cikti_excel import yaz as excel_yaz
+    from openpyxl import load_workbook
+
+    kayit = kz.Kazanim(sira=1, seviye="3 Yaş", etkinlik="X", kazanim="FAB.6. ...")
+    yol = tmp_path / "e.xlsx"
+    excel_yaz(yol, [(kayit, [])], {kayit.kimlik: []}, {}, False)
+    kitap = load_workbook(yol)
+    assert "Eşleşmeyenler" in kitap.sheetnames
+    assert kitap["Eşleşmeyenler"].cell(row=2, column=2).value == "X"

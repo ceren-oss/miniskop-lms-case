@@ -22,6 +22,13 @@ Sen bir fen egitimi icerik kuratorusun. Turkce ilk/orta okul kazanimlarini,
 Sketchfab'de 3B model aramak icin kullanilacak INGILIZCE arama terimlerine
 ceviriyorsun.
 
+Sana her satirda seviye, unite, ETKINLIK ADI, kazanim ve varsa etkinlik
+icerigi verilir. DIKKAT: kazanim alani cogu zaman genel bir mufredat kodudur
+("FAB.1. ... bilimsel gozlem yapabilme") ve konu hakkinda bilgi tasimaz. Boyle
+durumlarda esas sinyal ETKINLIK ADI ve etkinlik icerigidir ("Lav Lambasi",
+"Kopuren Dinozor" -> lava lamp, dinosaur). Terimleri satirin TAMAMINA bakarak
+uret; genel kazanim kodunu birebir cevirme.
+
 Her kazanim icin 2-4 terim uret ve su kurallara uy:
 - Terimler INGILIZCE olacak.
 - Her terim 1-3 kelime, tekil, somut bir NESNE/YAPI/OLGU adi olacak
@@ -34,6 +41,10 @@ Her kazanim icin 2-4 terim uret ve su kurallara uy:
 - Terimler birbirinden farkli acilari yakalasin; ayni seyin es anlamlisini
   tekrar yazma.
 - Kazanim birden fazla kavram iceriyorsa en gorsellestirilebilir olanlari sec.
+- Seviyeyi dikkate al: okul oncesi icin basit ve tanidik nesneler, ust siniflar
+  icin daha teknik modeller uygun.
+- Hicbir sekilde somut bir nesne cikmiyorsa etkinligin malzemesini/aracini yaz
+  (orn. "microscope", "magnifying glass").
 """
 
 
@@ -100,16 +111,22 @@ SOZLUK: dict[str, str] = {
     "bina": "building structure", "arac": "vehicle", "ucak": "airplane",
     "gemi": "ship", "tren": "train", "pusula": "compass",
     "saat": "mechanical clock", "carki": "gear mechanism",
+    # Kesif Kutusu etkinlik adlarindan gelen ekler
+    "lav lambasi": "lava lamp", "lav": "lava", "teraryum": "terrarium",
+    "periskop": "periscope", "elektroskop": "electroscope", "terazi": "balance scale",
+    "mum": "candle", "kalemlik": "pencil holder", "sabun": "soap bar",
+    "balon": "balloon", "kavanoz": "glass jar", "galaksi": "galaxy",
+    "ruzgar gulu": "pinwheel", "turbin": "wind turbine", "pusula": "compass",
+    "mikroskop": "microscope", "buyutec": "magnifying glass", "huni": "funnel",
+    "deney tupu": "test tube", "beher": "laboratory beaker", "pipet": "pipette",
+    "maket": "scale model", "kopru": "bridge structure", "helikopter": "helicopter",
+    "araba": "toy car", "ev": "house model", "bahce": "garden",
+    "yagmur olcer": "rain gauge", "kar tanesi": "snowflake", "yanardag": "volcano",
+    "kelebek": "butterfly", "kus yuvasi": "bird nest", "yumurta": "egg",
+    "salyangoz": "snail", "orumcek": "spider", "ahtapot": "octopus",
+    "penguen": "penguin", "kutup": "polar bear", "deve": "camel",
+    "vucut": "human body", "el": "human hand", "ayak": "human foot",
 }
-
-DURAK_KELIMELER = {
-    "ve", "ile", "icin", "bir", "bu", "olan", "gibi", "kendi", "uzerinde",
-    "arasinda", "ogrenci", "ogrenciler", "ogrenir", "kavrar", "aciklar",
-    "fark", "eder", "yapar", "tasarlar", "gozlemler", "gozlemleyerek",
-    "model", "modeli", "ornek", "verir", "kullanarak", "olusturur",
-    "inceleyerek", "siniflandirir", "tanir", "bilir", "anlatir",
-}
-
 
 def _sadelestir(metin: str) -> str:
     metin = metin.replace("İ", "i").replace("I", "i").replace("ı", "i")
@@ -149,13 +166,9 @@ def sozlukten_terimler(kazanim: str, azami: int = 4) -> list[str]:
         if len(bulunan) >= azami:
             break
 
-    if not bulunan:
-        # Hicbir sey eslesmediyse en uzun icerikli kelimeleri terim yap.
-        kelimeler = [
-            k for k in re.findall(r"[a-z]+", duz)
-            if len(k) > 4 and k not in DURAK_KELIMELER
-        ]
-        bulunan = sorted(set(kelimeler), key=len, reverse=True)[:2]
+    # Bilerek bos donulur: sozlukte karsiligi olmayan bir kazanim icin Turkce
+    # kelimeleri terim diye gondermek Sketchfab'de alakasiz sonuc uretir.
+    # Bos liste, kazanimin "Eslesmeyenler" olarak raporlanmasini saglar.
     return bulunan[:azami]
 
 
@@ -174,8 +187,10 @@ def _yigin_sor(istemci, model: str, yigin: list[Kazanim]) -> dict[str, list[str]
     satirlar = "\n".join(
         f"- kimlik: {k.kimlik}\n"
         f"  seviye: {k.seviye or '-'}\n"
+        f"  unite: {k.unite or '-'}\n"
         f"  etkinlik: {k.etkinlik or '-'}\n"
-        f"  kazanim: {k.kazanim}"
+        f"  kazanim: {k.kazanim}\n"
+        f"  etkinlik_icerigi: {k.icerik or '-'}"
         for k in yigin
     )
     yanit = istemci.messages.parse(
@@ -215,7 +230,9 @@ def uret(
     eksik: list[Kazanim] = []
 
     for k in kazanimlar:
-        anahtar = Onbellek.anahtar("terimler", model if not llm_kapali else "sozluk", k.kazanim)
+        anahtar = Onbellek.anahtar(
+            "terimler", model if not llm_kapali else "sozluk", k.baglam_imzasi
+        )
         onbellekten = onbellek.oku("terimler", anahtar)
         if onbellekten:
             sonuc[k.kimlik] = onbellekten
@@ -227,13 +244,13 @@ def uret(
 
     if llm_kapali:
         for k in eksik:
-            terimler = sozlukten_terimler(k.kazanim)
+            terimler = sozlukten_terimler(k.baglam_imzasi)
             sonuc[k.kimlik] = terimler
             onbellek.yaz(
                 "terimler",
-                Onbellek.anahtar("terimler", "sozluk", k.kazanim),
+                Onbellek.anahtar("terimler", "sozluk", k.baglam_imzasi),
                 terimler,
-                etiket=k.kazanim[:80],
+                etiket=k.etkinlik[:80],
             )
         return sonuc
 
@@ -255,13 +272,13 @@ def uret(
                 except Exception as hata:
                     log.warning("K%s icin LLM basarisiz (%s); sozluge dusuluyor.", k.kimlik, hata)
             if not terimler:
-                terimler = sozlukten_terimler(k.kazanim)
+                terimler = sozlukten_terimler(k.baglam_imzasi)
             terimler = terimler[:4]
             sonuc[k.kimlik] = terimler
             onbellek.yaz(
                 "terimler",
-                Onbellek.anahtar("terimler", model, k.kazanim),
+                Onbellek.anahtar("terimler", model, k.baglam_imzasi),
                 terimler,
-                etiket=k.kazanim[:80],
+                etiket=k.etkinlik[:80],
             )
     return sonuc

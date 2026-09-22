@@ -58,6 +58,7 @@ class Ayarlar:
     llm_model: str = VARSAYILAN_MODEL
     llm_yigin: int = 8                # tek istekte kac kazanim
     llm_kapali: bool = False          # True ise sozluk tabanli yedek kullanilir
+    terimler_dosyasi: Path | None = None   # elle hazirlanmis terim JSON'u
 
     # Sketchfab
     sketchfab_token: str | None = None

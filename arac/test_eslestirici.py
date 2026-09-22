@@ -375,3 +375,83 @@ def test_terim_veremeyen_llm_yaniti_uygunsuz_sayilir():
     kayit = kz.Kazanim(sira=1, seviye="3 Yaş", etkinlik="X", kazanim="Y")
     kararlar = trm._yigin_sor(SahteIstemciLLM(), "model", [kayit])
     assert kararlar["K001"].uygun is False
+
+
+# ------------------------------------------------ gozden gecirilmis terim dosyasi
+
+def test_terim_dosyasi_etkinlik_kazanim_ciftiyle_eslesir(tmp_path: Path):
+    import json
+
+    girdi = tmp_path / "k.csv"
+    girdi.write_text(
+        "Seviye;Etkinlik;Kazanım\n"
+        "4 Yaş;Köpüren Dinozor;FAB.1. Bilimsel gözlem yapabilme\n"
+        "4 Yaş;Duygularımı Keşfediyorum;SDB1.1. Kendini Tanıma\n",
+        encoding="utf-8",
+    )
+    dosya = tmp_path / "t.json"
+    dosya.write_text(json.dumps({"kararlar": [
+        {"etkinlik": "Köpüren Dinozor", "kazanim": "FAB.1. Bilimsel gözlem yapabilme",
+         "uygun": True, "terimler": ["dinosaur"]},
+        {"etkinlik": "Duygularımı Keşfediyorum", "kazanim": "SDB1.1. Kendini Tanıma",
+         "uygun": False, "terimler": [], "neden": "sosyal-duygusal tema"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    kayitlar, _ = kz.oku(girdi)
+    kararlar, eksik = trm.dosyadan_uygula(kayitlar, trm.dosyadan_oku(dosya))
+    assert eksik == []
+    assert kararlar["K001"].terimler == ["dinosaur"]
+    assert kararlar["K002"].uygun is False
+    assert kararlar["K002"].neden == "sosyal-duygusal tema"
+
+
+def test_terim_dosyasi_bicim_farklarina_dayanikli(tmp_path: Path):
+    """Kaynaktaki boşluk/noktalama farkları eşleşmeyi bozmamalı."""
+    import json
+
+    girdi = tmp_path / "k.csv"
+    girdi.write_text(
+        "Seviye;Etkinlik;Kazanım\n4 Yaş;Islanmayan Resim;FAB.2. göre sınıflandırabilme\n",
+        encoding="utf-8",
+    )
+    dosya = tmp_path / "t.json"
+    # Dosyada kazanim bitisik yazilmis (kaynak tablodaki yazim hatasi)
+    dosya.write_text(json.dumps([
+        {"etkinlik": "Islanmayan Resim", "kazanim": "FAB.2. göresınıflandırabilme",
+         "uygun": False, "neden": "su iticilik olayı"},
+    ], ensure_ascii=False), encoding="utf-8")
+
+    kayitlar, _ = kz.oku(girdi)
+    kararlar, eksik = trm.dosyadan_uygula(kayitlar, trm.dosyadan_oku(dosya))
+    assert eksik == [] and kararlar["K001"].neden == "su iticilik olayı"
+
+
+def test_terim_dosyasinda_olmayan_kazanim_uretime_kalir(tmp_path: Path):
+    import json
+
+    girdi = tmp_path / "k.csv"
+    girdi.write_text(
+        "Seviye;Etkinlik;Kazanım\n4 Yaş;Volkan;Yanardağı tanır\n5 Yaş;Yeni;Başka kazanım\n",
+        encoding="utf-8",
+    )
+    dosya = tmp_path / "t.json"
+    dosya.write_text(json.dumps([
+        {"etkinlik": "Volkan", "kazanim": "Yanardağı tanır", "uygun": True,
+         "terimler": ["volcano"]},
+    ], ensure_ascii=False), encoding="utf-8")
+
+    kayitlar, _ = kz.oku(girdi)
+    kararlar, eksik = trm.dosyadan_uygula(kayitlar, trm.dosyadan_oku(dosya))
+    assert list(kararlar) == ["K001"]
+    assert [k.etkinlik for k in eksik] == ["Yeni"]
+
+
+def test_terim_dosyasinda_uygun_ama_terimsiz_kayit_elenir(tmp_path: Path):
+    import json
+
+    dosya = tmp_path / "t.json"
+    dosya.write_text(json.dumps([
+        {"etkinlik": "X", "kazanim": "Y", "uygun": True, "terimler": []},
+    ], ensure_ascii=False), encoding="utf-8")
+    (karar,) = trm.dosyadan_oku(dosya).values()
+    assert karar.uygun is False

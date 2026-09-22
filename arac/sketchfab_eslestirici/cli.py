@@ -61,6 +61,10 @@ def ayristir(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--llm-yigin", type=int, default=8, help="Tek istekte kac kazanim")
     g.add_argument("--llm-kapali", action="store_true",
                    help="LLM kullanma; sozluk tabanli yedek terim uretimini kullan")
+    g.add_argument("--terimler-dosyasi", type=Path, default=None,
+                   help="Elle hazirlanmis/gozden gecirilmis terim JSON dosyasi. "
+                        "Buradaki kararlar LLM yerine kullanilir; dosyada olmayan "
+                        "kazanimlar icin normal uretim calisir.")
 
     s = a.add_argument_group("sketchfab")
     s.add_argument("--bekleme", type=float, default=1.0,
@@ -132,10 +136,19 @@ def calistir(ayarlar: Ayarlar) -> int:
     else:
         kaynak = f"Anthropic {ayarlar.llm_model}"
     log.info("Terim uretimi: %s", kaynak)
-    kararlar = trm.uret(
-        secilenler, onbellek, ayarlar.llm_model, ayarlar.llm_yigin, llm_kapali,
-        ayarlar.hepsini_dene,
-    )
+    kararlar: dict[str, trm.TerimKarari] = {}
+    uretilecek = secilenler
+    if ayarlar.terimler_dosyasi:
+        harita = trm.dosyadan_oku(ayarlar.terimler_dosyasi)
+        kararlar, uretilecek = trm.dosyadan_uygula(secilenler, harita)
+        kaynak = f"terim dosyasi ({ayarlar.terimler_dosyasi.name})"
+        log.info("Terim dosyasindan %d kazanim eslesti, %d kazanim uretilecek.",
+                 len(kararlar), len(uretilecek))
+    if uretilecek:
+        kararlar.update(trm.uret(
+            uretilecek, onbellek, ayarlar.llm_model, ayarlar.llm_yigin, llm_kapali,
+            ayarlar.hepsini_dene,
+        ))
     uygun_sayisi = sum(1 for k in kararlar.values() if k.uygun)
     log.info("Uygunluk: %d kazanim icin 3B model onerilecek, %d kazanim elendi.",
              uygun_sayisi, len(kararlar) - uygun_sayisi)
@@ -236,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         asgari_puan=a.asgari_puan,
         kati_sema=a.kati_sema,
         onbellek_omru_gun=a.onbellek_omru,
+        terimler_dosyasi=a.terimler_dosyasi,
         sutun_eslemesi={
             k: v for k, v in (
                 ("seviye", a.sutun_seviye),

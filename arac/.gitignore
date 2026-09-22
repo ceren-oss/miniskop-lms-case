@@ -7,3 +7,4 @@ cikti/
 # Şirket içi ARGE kazanım listesi: repo public, veri commit edilmez.
 # drive_kazanim_cikar.py ile Drive tablosundan yeniden üretilir.
 kazanimlar.csv
+terimler.json

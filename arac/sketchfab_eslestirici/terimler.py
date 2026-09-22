@@ -11,6 +11,8 @@ import re
 import unicodedata
 
 import dataclasses
+import json
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -358,3 +360,55 @@ def uret(
                 etiket=k.etkinlik[:80],
             )
     return sonuc
+
+
+# --------------------------------------------------------------------------
+# Elle hazirlanmis / gozden gecirilmis terim dosyasi
+# --------------------------------------------------------------------------
+
+
+def _eslesme_anahtari(etkinlik: str, kazanim: str) -> str:
+    """Etkinlik + kazanim ciftini, kucuk bicim farklarina dayanikli hale getirir."""
+    ham = f"{etkinlik}|{kazanim}"
+    for kaynak in ("İ", "I", "ı"):
+        ham = ham.replace(kaynak, "i")
+    return re.sub(r"[^a-z0-9|]+", "", ham.lower())
+
+
+def dosyadan_oku(yol: Path) -> dict[str, TerimKarari]:
+    """ARGE ekibinin gozden gecirebilecegi JSON terim dosyasini yukler.
+
+    Bicim: [{"etkinlik": ..., "kazanim": ..., "uygun": true,
+             "terimler": [...], "neden": ""}, ...]
+
+    Kayitlar (etkinlik, kazanim) cifti uzerinden eslenir; boylece CSV'deki satir
+    sirasi degisse de dosya gecerli kalir.
+    """
+    ham = json.loads(Path(yol).read_text(encoding="utf-8"))
+    kayitlar = ham.get("kararlar", ham) if isinstance(ham, dict) else ham
+    harita: dict[str, TerimKarari] = {}
+    for kayit in kayitlar:
+        anahtar = _eslesme_anahtari(kayit.get("etkinlik", ""), kayit.get("kazanim", ""))
+        terimler = [t.strip() for t in (kayit.get("terimler") or []) if t and t.strip()]
+        uygun = bool(kayit.get("uygun", bool(terimler))) and bool(terimler)
+        harita[anahtar] = TerimKarari(
+            terimler=terimler[:4],
+            uygun=uygun,
+            neden=(kayit.get("neden") or "").strip() or ("" if uygun else "gerekçe belirtilmedi"),
+        )
+    return harita
+
+
+def dosyadan_uygula(
+    kazanimlar: list[Kazanim], harita: dict[str, TerimKarari]
+) -> tuple[dict[str, TerimKarari], list[Kazanim]]:
+    """Dosyadaki kararlari eslestirir; dosyada olmayan kazanimlari ayrica dondurur."""
+    sonuc: dict[str, TerimKarari] = {}
+    eksik: list[Kazanim] = []
+    for k in kazanimlar:
+        karar = harita.get(_eslesme_anahtari(k.etkinlik, k.kazanim))
+        if karar is None:
+            eksik.append(k)
+        else:
+            sonuc[k.kimlik] = karar
+    return sonuc, eksik

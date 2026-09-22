@@ -58,6 +58,7 @@ python3 -m sketchfab_eslestirici kazanimlar.csv
 | `--sema-incele` | Ham JSON'u ve çözümlenen alan adlarını yazar, çıkar |
 | `--kati-sema` | Beklenen alan adları yanıtta yoksa çalışmayı durdurur |
 | `--llm-kapali` | LLM yerine sözlük tabanlı yedek terim üretimini kullanır |
+| `--terimler-dosyasi t.json` | Gözden geçirilmiş kararları kullanır (LLM yerine) |
 | `--hepsini-dene` | Uygunluk kapısını kapatır, her kazanım için terim dener |
 | `--asgari-puan 0.5` | Bu puanın altındaki modelleri listelemez (0 = kapalı) |
 | `--sahte-veri` | Ağ erişimi olmadan örnek veriyle çalıştırır (yalnızca deneme) |
@@ -102,6 +103,30 @@ doldurur. Bu yüzden terim üretimi iki aşamalı:
 
 Kapıyı kapatmak için `--hepsini-dene`, zayıf eşleşmeleri elemek için
 `--asgari-puan 0.5` kullanılabilir.
+
+### Gözden geçirilmiş terim dosyası (`--terimler-dosyasi`)
+
+Uygunluk kararı pedagojik bir karar; son sözü ARGE ekibinin söylemesi gerekir.
+`--terimler-dosyasi terimler.json` verildiğinde LLM yerine bu dosyadaki kararlar
+kullanılır, dosyada olmayan kazanımlar için normal üretim çalışır.
+
+```json
+[
+  {"etkinlik": "Köpüren Dinozor", "kazanim": "FAB.1. ...",
+   "uygun": true,  "terimler": ["dinosaur", "tyrannosaurus rex"]},
+  {"etkinlik": "Duygularımı Keşfediyorum", "kazanim": "SDB1.1. ...",
+   "uygun": false, "terimler": [], "neden": "sosyal-duygusal tema"}
+]
+```
+
+Kayıtlar `(etkinlik, kazanım)` çifti üzerinden eşlenir; satır sırası değişse de
+dosya geçerli kalır. Eşleme boşluk ve noktalama farklarına dayanıklıdır (kaynak
+tabloda "göre sınıflandırabilme" / "göresınıflandırabilme" gibi yazım farkları
+var). `uygun: true` deyip terim vermeyen kayıt elenmiş sayılır.
+
+Depoda `terimler.json` bulunmuyor (kazanım metinlerini içeriyor, repo public).
+188 kazanım için hazırlanmış sürüm ayrıca paylaşıldı: 101 kazanım uygun,
+87 kazanım elendi.
 
 ### Puanlama
 
